@@ -222,3 +222,68 @@
 (define-read-only (get-route-liquidity (route-id uint))
   (default-to u0 (map-get? route-liquidity route-id))
 )
+
+
+(define-data-var next-transaction-id uint u1)
+
+(define-map transaction-history
+  uint
+  {
+    user: principal,
+    recipient: principal,
+    amount: uint,
+    route-id: uint,
+    fee-paid: uint,
+    timestamp: uint,
+    settlement-id: uint
+  }
+)
+
+(define-map user-transaction-count
+  principal
+  uint
+)
+
+(define-public (record-transaction (recipient principal) (amount uint) (route-id uint) (fee-paid uint) (settlement-id uint))
+  (let (
+    (transaction-id (var-get next-transaction-id))
+    (user-count (default-to u0 (map-get? user-transaction-count tx-sender)))
+  )
+    (map-set transaction-history transaction-id
+      {
+        user: tx-sender,
+        recipient: recipient,
+        amount: amount,
+        route-id: route-id,
+        fee-paid: fee-paid,
+        timestamp: stacks-block-height,
+        settlement-id: settlement-id
+      }
+    )
+    (map-set user-transaction-count tx-sender (+ user-count u1))
+    (var-set next-transaction-id (+ transaction-id u1))
+    (ok transaction-id)
+  )
+)
+
+(define-read-only (get-transaction (transaction-id uint))
+  (map-get? transaction-history transaction-id)
+)
+
+(define-read-only (get-user-transaction-count (user principal))
+  (default-to u0 (map-get? user-transaction-count user))
+)
+
+(define-read-only (get-total-volume (user principal))
+  (fold calculate-user-volume (list u1 u2 u3 u4 u5) u0)
+)
+
+(define-private (calculate-user-volume (tx-id uint) (accumulator uint))
+  (match (map-get? transaction-history tx-id)
+    transaction (if (is-eq (get user transaction) tx-sender)
+      (+ accumulator (get amount transaction))
+      accumulator
+    )
+    accumulator
+  )
+)
