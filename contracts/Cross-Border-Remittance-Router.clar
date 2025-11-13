@@ -6,6 +6,13 @@
 (define-constant err-route-not-found (err u104))
 (define-constant err-invalid-rate (err u105))
 
+(define-constant err-unauthorized-signer (err u106))
+(define-constant err-already-approved (err u107))
+(define-constant err-threshold-not-met (err u108))
+
+(define-data-var multisig-threshold uint u100000)
+(define-data-var required-approvals uint u2)
+
 (define-data-var next-route-id uint u1)
 (define-data-var protocol-fee-rate uint u50)
 
@@ -285,5 +292,86 @@
       accumulator
     )
     accumulator
+  )
+)
+
+(define-map authorized-signers
+  principal
+  bool
+)
+
+(define-map settlement-approvals
+  uint
+  {
+    approval-count: uint,
+    is-executed: bool,
+    threshold-required: bool
+  }
+)
+
+(define-map signer-approvals
+  { settlement-id: uint, signer: principal }
+  bool
+)
+
+(define-public (authorize-signer (signer principal))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (map-set authorized-signers signer true)
+    (ok true)
+  )
+)
+
+(define-public (revoke-signer (signer principal))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (map-set authorized-signers signer false)
+    (ok true)
+  )
+)
+
+(define-public (set-multisig-threshold (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (var-set multisig-threshold amount)
+    (ok true)
+  )
+)
+
+(define-public (set-required-approvals (count uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (var-set required-approvals count)
+    (ok true)
+  )
+)
+
+(define-public (approve-settlement (settlement-id uint))
+  (let (
+    (settlement (unwrap! (map-get? pending-settlements settlement-id) err-route-not-found))
+    (is-authorized (default-to false (map-get? authorized-signers tx-sender)))
+    (already-approved (default-to false (map-get? signer-approvals { settlement-id: settlement-id, signer: tx-sender })))
+    (approval-data (default-to { approval-count: u0, is-executed: false, threshold-required: (>= (get amount settlement) (var-get multisig-threshold)) } (map-get? settlement-approvals settlement-id)))
+  )
+    (asserts! is-authorized err-unauthorized-signer)
+    (asserts! (not already-approved) err-already-approved)
+    (map-set signer-approvals { settlement-id: settlement-id, signer: tx-sender } true)
+    (map-set settlement-approvals settlement-id (merge approval-data { approval-count: (+ (get approval-count approval-data) u1) }))
+    (ok (+ (get approval-count approval-data) u1))
+  )
+)
+
+(define-read-only (get-approval-status (settlement-id uint))
+  (map-get? settlement-approvals settlement-id)
+)
+
+(define-read-only (is-authorized-signer (signer principal))
+  (default-to false (map-get? authorized-signers signer))
+)
+
+(define-read-only (can-execute-settlement (settlement-id uint))
+  (match (map-get? settlement-approvals settlement-id)
+    approval-data (>= (get approval-count approval-data) (var-get required-approvals))
+    false
   )
 )
